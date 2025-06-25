@@ -1,0 +1,20 @@
+{
+  "assumptions": {
+    "energy_price_per_MWh": "50 \u20ac",
+    "annualization_factor": "2.02 (based on 181 days of analysis)"
+  },
+  "total_lost_energy_MWh_period": "822.71",
+  "total_estimated_cost_EUR_period": "41135.40",
+  "annualized_estimated_cost_EUR": "83009.42",
+  "cost_breakdown_EUR": {
+    "Cloud": "1027.77",
+    "Temperature": "1780.47",
+    "Soiling": "19089.30",
+    "Shading": "759.14",
+    "Inverter": "8580.41",
+    "Curtailment": "5123.24",
+    "Tracker Malfunction": "28.45",
+    "Other Losses": "4746.62"
+  },
+  "potential_savings_note": "A significant portion of these losses are typically addressable through operational improvements and maintenance. Example: Targeting 70% reduction in Soiling losses."
+}

@@ -1,0 +1,37 @@
+[
+  {
+    "priority": "High",
+    "action": "Implement more frequent or automated panel cleaning program.",
+    "frequency": "Monthly or Bi-monthly, adjusted for local dust conditions.",
+    "impact": "Reduce Soiling losses (currently 381.79 MWh) by 50-80%.",
+    "category": "Soiling"
+  },
+  {
+    "priority": "Medium",
+    "action": "Investigate module cooling solutions or improved ventilation strategies for panels/inverters.",
+    "frequency": "Annual review, especially before hot seasons.",
+    "impact": "Reduce Temperature losses (currently 35.61 MWh) by 30-50%.",
+    "category": "Temperature"
+  },
+  {
+    "priority": "High",
+    "action": "Conduct in-depth diagnostics and preventative maintenance on inverters.",
+    "frequency": "Quarterly inspection, annual major service.",
+    "impact": "Reduce Inverter losses (currently 171.61 MWh) by 20-40%.",
+    "category": "Inverter"
+  },
+  {
+    "priority": "Medium",
+    "action": "Identify and mitigate sources of persistent shading (e.g., vegetation, new structures). Review tracker control algorithms for optimization.",
+    "frequency": "Seasonal visual inspection, annual software review.",
+    "impact": "Reduce Shading losses (currently 83 events) by 50-70%.",
+    "category": "Shading"
+  },
+  {
+    "priority": "Low-Medium",
+    "action": "Conduct detailed inspection of tracker mechanisms and controls for potential malfunctions.",
+    "frequency": "Bi-annual inspection.",
+    "impact": "Prevent recurrence of Tracker Malfunction events (currently 14 events).",
+    "category": "Tracker Malfunction"
+  }
+]
