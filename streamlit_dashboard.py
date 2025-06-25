@@ -5,7 +5,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import datetime as dt
-import os
+import os # Import os for file operations
 
 # IMPORTANT: This script assumes 'definitive_solar_analysis.py' is in the same directory
 # so it can import the DefinitiveSolarFix class to run the analysis if a raw CSV is uploaded.
@@ -38,27 +38,31 @@ def create_streamlit_dashboard():
     if uploaded_file is not None:
         file_name = uploaded_file.name
         
-        if file_name == "Dataset 1.csv":
-            st.info("Processing raw 'Dataset 1.csv'. This may take a moment.")
-            # If raw data is uploaded, run the full analysis using DefinitiveSolarFix
-            temp_path = f"temp_uploaded_{file_name}"
-            with open(temp_path, "wb") as f:
-                f.write(uploaded_file.getbuffer())
-            
-            analyzer = DefinitiveSolarFix(temp_path)
-            df = analyzer.run_definitive_analysis()
-            os.remove(temp_path) # Clean up temp file
-            st.success("Analysis complete! Displaying results for raw data.")
+        try:
+            if file_name == "Dataset 1.csv":
+                st.info("Processing raw 'Dataset 1.csv'. This may take a moment.")
+                # If raw data is uploaded, run the full analysis using DefinitiveSolarFix
+                temp_path = f"temp_uploaded_{file_name}"
+                with open(temp_path, "wb") as f:
+                    f.write(uploaded_file.getbuffer())
+                
+                analyzer = DefinitiveSolarFix(temp_path)
+                df = analyzer.run_definitive_analysis()
+                os.remove(temp_path) # Clean up temp file
+                st.success("Analysis complete! Displaying results for raw data.")
 
-        elif file_name == "definitive_solar_analysis.csv":
-            st.info("Loading pre-processed 'definitive_solar_analysis.csv'.")
-            df = pd.read_csv(uploaded_file, index_col=0, parse_dates=True)
-            # Ensure 'datetime' index name is set if it was lost
-            if df.index.name is None:
-                df.index.name = 'datetime'
-            st.success("Pre-processed data loaded successfully.")
-        else:
-            st.warning("Please upload 'Dataset 1.csv' or 'definitive_solar_analysis.csv'.")
+            elif file_name == "definitive_solar_analysis.csv":
+                st.info("Loading pre-processed 'definitive_solar_analysis.csv'.")
+                df = pd.read_csv(uploaded_file, index_col=0, parse_dates=True)
+                # Ensure 'datetime' index name is set if it was lost
+                if df.index.name is None:
+                    df.index.name = 'datetime'
+                st.success("Pre-processed data loaded successfully.")
+            else:
+                st.warning("Please upload 'Dataset 1.csv' or 'definitive_solar_analysis.csv'.")
+        except Exception as e:
+            st.error(f"Error processing file: {e}. Please ensure the CSV format is correct.")
+            df = None # Reset df to None on error
     
     if df is not None:
         # Filter data by date range if selected
@@ -77,9 +81,26 @@ def create_streamlit_dashboard():
         # Ensure date_range is a tuple/list of two dates
         if len(date_range) == 2:
             start_date, end_date = date_range
-            df_filtered = df[(df.index.date >= start_date) & (df.index.date <= end_date)]
+            df_filtered = df[(df.index.date >= start_date) & (df.index.date <= end_date)].copy() # Use .copy() to avoid SettingWithCopyWarning
         else:
-            df_filtered = df # No date filter applied if only one date selected
+            df_filtered = df.copy() # No date filter applied if only one date selected, use .copy()
+        
+        # Ensure 'avg_module_temp' is available for the dashboard even if not used in primary analysis
+        if 'avg_module_temp' not in df_filtered.columns:
+            # Attempt to create from raw data if possible, or fill with default
+            temp_cols = [col for col in df_filtered.columns if 't_mod' in col or 't_amb' in col]
+            if temp_cols:
+                df_filtered['avg_module_temp'] = df_filtered[temp_cols].mean(axis=1).fillna(25)
+            else:
+                df_filtered['avg_module_temp'] = 25.0 # Default if no temp data found
+                
+        # Ensure 'actual_power_mw' is available for dashboard
+        if 'actual_power_mw' not in df_filtered.columns:
+            # Recreate from actual_energy_15min if possible
+            if 'actual_energy_15min' in df_filtered.columns:
+                df_filtered['actual_power_mw'] = df_filtered['actual_energy_15min'] / 0.25
+            else:
+                df_filtered['actual_power_mw'] = 0.0 # Default to 0 if no actual energy
 
         # Main dashboard content
         st.header("✨ Key Performance Indicators")
@@ -184,7 +205,7 @@ def create_streamlit_dashboard():
         st.header("📈 Time Series Trends of Losses")
         
         analysis_type = st.selectbox(
-            "Select Time Resolution",
+            "Select Time Resolution for Trends",
             ["15-minute", "Hourly", "Daily", "Weekly", "Monthly"]
         )
         
@@ -208,7 +229,7 @@ def create_streamlit_dashboard():
             **{col: 'sum' for col in flag_cols}, # Sum for event counts
             **{col: 'sum' for col in energy_loss_cols_plot}, # Sum for energy losses
             'performance_ratio': 'mean' # Mean for PR
-        })
+        }).fillna(0) # Fill any NaNs after resampling with 0 for plotting
         
         fig_ts = make_subplots(
             rows=2, cols=1,
@@ -227,9 +248,10 @@ def create_streamlit_dashboard():
                 stackgroup='one', # Stacks the areas
                 line={'width': 0.5},
                 hovertemplate=f'<b>Date</b>: %{{x}}<br><b>{col.replace("Loss", " Loss").replace("Effect", " Effect")} Events</b>: %{{y}}<extra></extra>',
-                showlegend=True if i == 0 else False # Only show legend once for the stackgroup
+                # Show legend for all traces for clarity in stacked charts
+                showlegend=True, 
+                legendgroup='event_counts' # Group for legend
             ), row=1, col=1)
-        fig_ts.update_layout(title_text=f"{analysis_type} Loss Analysis", title_x=0.5)
         fig_ts.update_yaxes(title_text="Number of Events", row=1, col=1)
         
         # Energy losses (stacked area)
@@ -242,28 +264,57 @@ def create_streamlit_dashboard():
                 stackgroup='two', # Stacks the areas
                 line={'width': 0.5},
                 hovertemplate=f'<b>Date</b>: %{{x}}<br><b>{col.replace("_energy_loss", " Loss").replace("_", " ").title()}</b>: %{{y:.2f}} MWh<extra></extra>',
-                showlegend=True if i == 0 else False # Only show legend once for the stackgroup
+                # Show legend for all traces for clarity in stacked charts
+                showlegend=True,
+                legendgroup='energy_losses' # Group for legend
             ), row=2, col=1)
         fig_ts.update_yaxes(title_text="Energy Loss (MWh)", row=2, col=1)
 
-        fig_ts.update_layout(height=700, showlegend=True) # Adjust height as needed
+        fig_ts.update_layout(height=700, showlegend=True, hovermode="x unified") # Ensure overall legend is shown and hover is unified
         st.plotly_chart(fig_ts, use_container_width=True)
         
+        # New: Daily Total Losses (Stacked Bar Chart)
+        st.header("Daily Losses by Category")
+        daily_losses_data = df_filtered[energy_loss_cols_plot].resample('D').sum().fillna(0)
+        
+        fig_daily_losses = go.Figure()
+        for col in energy_loss_cols_plot:
+            fig_daily_losses.add_trace(go.Bar(
+                x=daily_losses_data.index,
+                y=daily_losses_data[col],
+                name=col.replace("_energy_loss", "").replace("_", " ").title()
+            ))
+        
+        fig_daily_losses.update_layout(
+            barmode='stack',
+            title='Daily Total Losses by Category',
+            xaxis_title='Date',
+            yaxis_title='Energy Loss (MWh)',
+            hovermode="x unified"
+        )
+        st.plotly_chart(fig_daily_losses, use_container_width=True)
+
+
         # Asset-level analysis (simplified, as detailed string data is limited)
         st.header("🏭 Asset-Level Insights")
         
         col_inv1, col_inv2 = st.columns(2)
         
         with col_inv1:
-            st.subheader("Inverter Performance Comparison")
+            st.subheader("Inverter Power Output Over Time")
             # Assuming 'inversores_ctin03_inv_03_03_p' and 'inversores_ctin08_inv_08_08_p' exist
-            if 'inversores_ctin03_inv_03_03_p' in df_filtered.columns and \
-               'inversores_ctin08_inv_08_08_p' in df_filtered.columns:
+            inverter_power_cols = [col for col in df_filtered.columns if 'inv_' in col and '_p' in col and 'p_dc' not in col]
+            
+            if inverter_power_cols:
+                inv_power_data = df_filtered[inverter_power_cols].copy() # Get relevant power columns
+                # Convert to MW if necessary (assuming they might be in kW)
+                # Let's verify by checking max value. If > 1000, probably kW, so divide by 1000
+                if inv_power_data.max().max() > 100: # Heuristic: if max power exceeds 100kW, assume it's in W or kW
+                    inv_power_data = inv_power_data / 1000 # Convert to MW
                 
-                inv_power_data = df_filtered[['inversores_ctin03_inv_03_03_p', 'inversores_ctin08_inv_08_08_p']].copy() / 1000 # Convert to MW
-                inv_power_data.columns = ['INV-03 Power (MW)', 'INV-08 Power (MW)']
+                inv_power_data.columns = [col.replace('inversores_ctin', 'INV-').replace('_inv_', '-').replace('_p', ' Power (MW)') for col in inverter_power_cols]
                 
-                fig_inv = px.line(inv_power_data, title="Inverter Power Output Over Time")
+                fig_inv = px.line(inv_power_data.dropna(), title="Inverter Power Output Over Time")
                 fig_inv.update_yaxes(title_text="Power (MW)")
                 fig_inv.update_xaxes(title_text="Date")
                 st.plotly_chart(fig_inv, use_container_width=True)
@@ -272,8 +323,13 @@ def create_streamlit_dashboard():
                 
         with col_inv2:
             st.subheader("Aggregated Inverter Energy Output")
-            inv_03_total_energy = df_filtered['inversores_ctin03_inv_03_03_p'].sum() * 0.25 / 1000 if 'inversores_ctin03_inv_03_03_p' in df_filtered.columns else 0
-            inv_08_total_energy = df_filtered['inversores_ctin08_inv_08_08_p'].sum() * 0.25 / 1000 if 'inversores_ctin08_inv_08_08_p' in df_filtered.columns else 0
+            # Using specific column names as provided in Dataset 1.csv for direct summation
+            inv_03_power = df_filtered.get('inversores_ctin03_inv_03_03_p', pd.Series(0.0, index=df_filtered.index))
+            inv_08_power = df_filtered.get('inversores_ctin08_inv_08_08_p', pd.Series(0.0, index=df_filtered.index))
+
+            # Convert power (assumed in kW from previous analysis) to MWh
+            inv_03_total_energy = inv_03_power.sum() * 0.25 / 1000
+            inv_08_total_energy = inv_08_power.sum() * 0.25 / 1000
 
             inv_totals = pd.DataFrame({
                 'Inverter': ['INV-03', 'INV-08'],
@@ -319,6 +375,42 @@ def create_streamlit_dashboard():
             else:
                 st.info("POA irradiance or actual power data not available.")
         
+        # New: Hourly Average Performance Ratio Trend
+        st.header("⏱️ Hourly Performance Trend")
+        if 'performance_ratio' in df_filtered.columns and 'is_day' in df_filtered.columns:
+            # Filter for daytime and relevant PR values (not zeroed out night values)
+            hourly_pr_data = df_filtered[df_filtered['is_day'] & (df_filtered['theoretical_energy_15min'] > 0.1)].copy()
+            hourly_pr_data['hour'] = hourly_pr_data.index.hour
+            hourly_avg_pr = hourly_pr_data.groupby('hour')['performance_ratio'].mean().reset_index()
+            
+            fig_hourly_pr = px.line(
+                hourly_avg_pr, 
+                x='hour', 
+                y='performance_ratio', 
+                title='Average Performance Ratio by Hour of Day',
+                labels={'hour': 'Hour of Day', 'performance_ratio': 'Average Performance Ratio'},
+                markers=True
+            )
+            fig_hourly_pr.update_yaxes(range=[0, 1.0]) # PR is typically between 0 and 1
+            st.plotly_chart(fig_hourly_pr, use_container_width=True)
+        else:
+            st.info("Performance ratio data not sufficient for hourly trend analysis.")
+
+        # New: POA Irradiance Distribution
+        st.header("☀️ Irradiance Distribution")
+        if 'poa_irradiance' in df_filtered.columns:
+            fig_irr_hist = px.histogram(
+                df_filtered[df_filtered['poa_irradiance'] > 10].dropna(subset=['poa_irradiance']), # Filter out night zeros
+                x='poa_irradiance',
+                nbins=50,
+                title='Distribution of POA Irradiance',
+                labels={'poa_irradiance': 'POA Irradiance (W/m²)'}
+            )
+            st.plotly_chart(fig_irr_hist, use_container_width=True)
+        else:
+            st.info("POA Irradiance data not available for distribution analysis.")
+
+
         st.markdown("---")
         st.markdown("Disclaimer: Economic and maintenance recommendations are illustrative and depend on specific operational contexts and costs.")
     
