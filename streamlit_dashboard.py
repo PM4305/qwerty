@@ -158,11 +158,16 @@ def create_streamlit_dashboard():
         loss_data_filtered = {k: v for k, v in loss_data.items() if v > 0.01}
         
         with col1:
-            if loss_data_filtered:
+            if loss_data_filtered and total_theoretical_energy > 0: # Ensure theoretical energy is not zero to avoid division by zero
+                # Calculate percentages relative to Total Theoretical Energy
+                loss_percentages_of_theoretical = {
+                    k: (v / total_theoretical_energy) * 100 for k, v in loss_data_filtered.items()
+                }
+
                 fig_pie = px.pie(
-                    values=list(loss_data_filtered.values()),
-                    names=list(loss_data_filtered.keys()),
-                    title="Energy Loss Distribution (MWh)",
+                    values=list(loss_percentages_of_theoretical.values()), # Use percentages of theoretical
+                    names=list(loss_percentages_of_theoretical.keys()),
+                    title="Energy Loss Distribution (% of Theoretical Energy)", # Updated title for clarity
                     hole=0.3,
                     color_discrete_sequence=px.colors.sequential.RdBu # Diverging color scale
                 )
@@ -201,7 +206,7 @@ def create_streamlit_dashboard():
             )
             st.plotly_chart(fig_daily, use_container_width=True)
         
-        # Time-series analysis for flags and losses
+        # Time-series analysis for losses (Removed "Event Counts" Graph)
         st.header("📈 Time Series Trends of Losses")
         
         analysis_type = st.selectbox(
@@ -209,80 +214,218 @@ def create_streamlit_dashboard():
             ["15-minute", "Hourly", "Daily", "Weekly", "Monthly"]
         )
         
+        # Define paths for pre-generated summary files (assuming they are in './submission_files/')
+        SUBMISSION_DIR = './submission_files/'
+        
+        # Default to resampling current df_filtered
+        ts_data = None
+        loaded_from_file = False
+
+        # Define common plotting column names for energy losses
+        # These are used for both pre-loaded files and on-the-fly calculations
+        energy_loss_cols_plot_raw = ['cloud_energy_loss', 'shading_energy_loss', 'temperature_energy_loss', 
+                                     'soiling_energy_loss', 'inverter_energy_loss', 'curtailment_energy_loss', 
+                                     'tracker_malfunction_energy_loss', 'other_energy_loss']
+        
+        # Mapping for column names from quantified_losses_detailed.csv if using 15-minute file
+        quantified_losses_col_map = {
+            'cloud_energy_loss': 'Cloud Loss Mwh',
+            'shading_energy_loss': 'Shading Loss Mwh',
+            'temperature_energy_loss': 'Temperature Loss Mwh',
+            'soiling_energy_loss': 'Soiling Loss Mwh',
+            'inverter_energy_loss': 'Inverter Loss Mwh',
+            'curtailment_energy_loss': 'Curtailment Loss Mwh',
+            'tracker_malfunction_energy_loss': 'Tracker Malfunction Loss Mwh',
+            'other_energy_loss': 'Other Losses Mwh'
+        }
+
+
         if analysis_type == "15-minute":
             resample_freq = '15T'
+            dtick_x_val = "M1" 
+            tick_format_x = "%b %Y" # Month Year
+            tick_angle_x = 0 
+            
+            # Try to load from pre-generated files
+            quantified_losses_path = os.path.join(SUBMISSION_DIR, "quantified_losses_detailed.csv")
+
+            if os.path.exists(quantified_losses_path):
+                st.info(f"Loading 15-minute energy loss data from '{os.path.basename(quantified_losses_path)}'.")
+                try:
+                    df_losses = pd.read_csv(quantified_losses_path, parse_dates=['datetime'], index_col='datetime')
+                    # Filter to Plant level for overall trends, as these files contain multi-level data
+                    df_losses_plant = df_losses[df_losses['Level'] == 'Plant']
+                    
+                    # Rename columns to match the general names for consistency in plotting loop
+                    ts_data = df_losses_plant.rename(columns={v: k for k, v in quantified_losses_col_map.items()})
+                    ts_data = ts_data[[col for col in energy_loss_cols_plot_raw if col in ts_data.columns]].fillna(0)
+                    loaded_from_file = True
+                except Exception as e:
+                    st.warning(f"Could not load pre-generated 15-minute energy loss file: {e}. Falling back to dynamic calculation.")
+                    ts_data = None # Reset to trigger fallback
+            
         elif analysis_type == "Hourly":
             resample_freq = 'H'
+            dtick_x_val = "M1" 
+            tick_format_x = "%b %Y"
+            tick_angle_x = 0 
+            summary_path = os.path.join(SUBMISSION_DIR, "loss_summary_hourly.csv")
+            if os.path.exists(summary_path):
+                st.info(f"Loading hourly data from '{os.path.basename(summary_path)}'.")
+                try:
+                    ts_data = pd.read_csv(summary_path, parse_dates=['datetime'], index_col='datetime')
+                    ts_data = ts_data[[col for col in energy_loss_cols_plot_raw if col in ts_data.columns]].fillna(0)
+                    loaded_from_file = True
+                except Exception as e:
+                    st.warning(f"Could not load pre-generated hourly summary: {e}. Falling back to dynamic calculation.")
+                    ts_data = None
+            
         elif analysis_type == "Daily":
             resample_freq = 'D'
+            dtick_x_val = "M1" 
+            tick_format_x = "%b %Y"
+            tick_angle_x = 0
+            summary_path = os.path.join(SUBMISSION_DIR, "loss_summary_daily.csv")
+            if os.path.exists(summary_path):
+                st.info(f"Loading daily data from '{os.path.basename(summary_path)}'.")
+                try:
+                    ts_data = pd.read_csv(summary_path, parse_dates=['datetime'], index_col='datetime')
+                    ts_data = ts_data[[col for col in energy_loss_cols_plot_raw if col in ts_data.columns]].fillna(0)
+                    loaded_from_file = True
+                except Exception as e:
+                    st.warning(f"Could not load pre-generated daily summary: {e}. Falling back to dynamic calculation.")
+                    ts_data = None
+
         elif analysis_type == "Weekly":
             resample_freq = 'W'
+            dtick_x_val = "M1" 
+            tick_format_x = "%b %Y"
+            tick_angle_x = 0
+            summary_path = os.path.join(SUBMISSION_DIR, "loss_summary_weekly.csv")
+            if os.path.exists(summary_path):
+                st.info(f"Loading weekly data from '{os.path.basename(summary_path)}'.")
+                try:
+                    ts_data = pd.read_csv(summary_path, parse_dates=['datetime'], index_col='datetime')
+                    ts_data = ts_data[[col for col in energy_loss_cols_plot_raw if col in ts_data.columns]].fillna(0)
+                    loaded_from_file = True
+                except Exception as e:
+                    st.warning(f"Could not load pre-generated weekly summary: {e}. Falling back to dynamic calculation.")
+                    ts_data = None
         else:  # Monthly
             resample_freq = 'M'
-        
-        # Columns for summing flags and energy losses
-        flag_cols = ['CloudCover', 'Shading', 'TemperatureEffect', 'Soiling', 'InverterLoss', 'Curtailment', 'TrackerMalfunction', 'OtherLosses']
-        energy_loss_cols_plot = ['cloud_energy_loss', 'shading_energy_loss', 'temperature_energy_loss', 'soiling_energy_loss', 'inverter_energy_loss', 'curtailment_energy_loss', 'tracker_malfunction_energy_loss', 'other_energy_loss']
+            dtick_x_val = "M1" 
+            tick_format_x = "%b %Y"
+            tick_angle_x = 0
+            summary_path = os.path.join(SUBMISSION_DIR, "loss_summary_monthly.csv")
+            if os.path.exists(summary_path):
+                st.info(f"Loading monthly data from '{os.path.basename(summary_path)}'.")
+                try:
+                    ts_data = pd.read_csv(summary_path, parse_dates=['datetime'], index_col='datetime')
+                    ts_data = ts_data[[col for col in energy_loss_cols_plot_raw if col in ts_data.columns]].fillna(0)
+                    loaded_from_file = True
+                except Exception as e:
+                    st.warning(f"Could not load pre-generated monthly summary: {e}. Falling back to dynamic calculation.")
+                    ts_data = None
 
-        # Resample data based on selection
-        ts_data = df_filtered.resample(resample_freq).agg({
-            **{col: 'sum' for col in flag_cols}, # Sum for event counts
-            **{col: 'sum' for col in energy_loss_cols_plot}, # Sum for energy losses
-            'performance_ratio': 'mean' # Mean for PR
-        }).fillna(0) # Fill any NaNs after resampling with 0 for plotting
+        # Fallback to dynamic calculation if files were not loaded or an error occurred
+        if ts_data is None:
+            st.info("Calculating time series data on the fly (pre-generated files not used or not found).")
+            ts_data = df_filtered.resample(resample_freq).agg({
+                **{col: 'sum' for col in energy_loss_cols_plot_raw}, 
+                'performance_ratio': 'mean' 
+            }).fillna(0) 
         
-        fig_ts = make_subplots(
-            rows=2, cols=1,
-            subplot_titles=(f'{analysis_type} Loss Event Counts', f'{analysis_type} Energy Loss Amount (MWh)'),
-            shared_xaxes=True,
-            vertical_spacing=0.1
+        # Dynamically sort energy_loss_cols_plot based on their total sum for better layering.
+        # This places smaller sums at the bottom, larger sums at the top.
+        existing_energy_loss_cols = [col for col in energy_loss_cols_plot_raw if col in ts_data.columns]
+        energy_loss_sums = {col: ts_data[col].sum() for col in existing_energy_loss_cols}
+        energy_loss_cols_plot = sorted(existing_energy_loss_cols, key=lambda x: energy_loss_sums[x])
+
+
+        fig_ts = go.Figure() # No subplots, single figure now
+        
+        # Energy losses (stacked area) - this is now the only graph in this section
+        for col in energy_loss_cols_plot: 
+            # Adjust name for legend based on source (raw vs. pre-generated)
+            display_name = col.replace("_energy_loss", " Loss").replace("_", " ").title()
+            # If loaded from quantified_losses_detailed.csv, the column name might be 'Cloud Loss Mwh'
+            if " Loss Mwh" in col: # Check for the specific naming convention from quantified_losses_detailed.csv
+                 display_name = col.replace(" Mwh", "").replace(" Loss", " Loss").title()
+
+
+            fig_ts.add_trace(go.Scatter(
+                x=ts_data.index, 
+                y=ts_data[col], 
+                mode='lines', 
+                name=display_name, 
+                stackgroup='one', 
+                line={'width': 0.5},
+                # !!! IMPORTANT CHANGE HERE !!!
+                hovertemplate=f'<b>Date</b>: %{{x|%Y-%m-%d %H:%M}}<br><b>{display_name}</b>: %{{y:.2f}} Mwh<extra></extra>', 
+                showlegend=True,
+                legendgroup='energy_losses' 
+            )) # No row/col arguments for single plot
+        fig_ts.update_yaxes(title_text="Energy Loss (MWh)") # No row/col arguments for single plot
+
+        # Apply x-axis settings for the single subplot
+        fig_ts.update_xaxes(
+            showticklabels=True, 
+            title_text="Date",
+            dtick=dtick_x_val, # Dynamic dtick based on selected resolution
+            tickformat=tick_format_x, # Dynamic tick format
+            tickangle=tick_angle_x, # Apply tick angle
+            type='date', # Explicitly set axis type
         )
         
-        # Loss events count (stacked area)
-        for i, col in enumerate(flag_cols):
-            fig_ts.add_trace(go.Scatter(
-                x=ts_data.index, 
-                y=ts_data[col], 
-                mode='lines', 
-                name=col.replace("Loss", " Loss").replace("Effect", " Effect"),
-                stackgroup='one', # Stacks the areas
-                line={'width': 0.5},
-                hovertemplate=f'<b>Date</b>: %{{x}}<br><b>{col.replace("Loss", " Loss").replace("Effect", " Effect")} Events</b>: %{{y}}<extra></extra>',
-                # Show legend for all traces for clarity in stacked charts
-                showlegend=True, 
-                legendgroup='event_counts' # Group for legend
-            ), row=1, col=1)
-        fig_ts.update_yaxes(title_text="Number of Events", row=1, col=1)
-        
-        # Energy losses (stacked area)
-        for i, col in enumerate(energy_loss_cols_plot):
-            fig_ts.add_trace(go.Scatter(
-                x=ts_data.index, 
-                y=ts_data[col], 
-                mode='lines', 
-                name=col.replace("_energy_loss", " Loss").replace("_", " ").title(),
-                stackgroup='two', # Stacks the areas
-                line={'width': 0.5},
-                hovertemplate=f'<b>Date</b>: %{{x}}<br><b>{col.replace("_energy_loss", " Loss").replace("_", " ").title()}</b>: %{{y:.2f}} MWh<extra></extra>',
-                # Show legend for all traces for clarity in stacked charts
-                showlegend=True,
-                legendgroup='energy_losses' # Group for legend
-            ), row=2, col=1)
-        fig_ts.update_yaxes(title_text="Energy Loss (MWh)", row=2, col=1)
-
-        fig_ts.update_layout(height=700, showlegend=True, hovermode="x unified") # Ensure overall legend is shown and hover is unified
+        fig_ts.update_layout(height=450, showlegend=True, hovermode="x unified",
+                            title=f'{analysis_type} Energy Loss Amount (MWh)') # Added title directly to the figure layout
         st.plotly_chart(fig_ts, use_container_width=True)
         
         # New: Daily Total Losses (Stacked Bar Chart)
         st.header("Daily Losses by Category")
-        daily_losses_data = df_filtered[energy_loss_cols_plot].resample('D').sum().fillna(0)
         
+        # Determine data for Daily Total Losses. Prefer loss_summary_daily.csv if available.
+        daily_summary_path = os.path.join(SUBMISSION_DIR, "loss_summary_daily.csv")
+        if os.path.exists(daily_summary_path):
+            st.info(f"Loading daily total losses from '{os.path.basename(daily_summary_path)}'.")
+            try:
+                daily_losses_data = pd.read_csv(daily_summary_path, parse_dates=['datetime'], index_col='datetime')
+                # Filter by selected date range
+                daily_losses_data = daily_losses_data[(daily_losses_data.index.date >= start_date) & (daily_losses_data.index.date <= end_date)].copy()
+                # Use column names consistent with the summary file for plotting
+                energy_loss_bar_cols_for_plot = ['cloud_energy_loss', 'shading_energy_loss', 'temperature_energy_loss', 
+                                                  'soiling_energy_loss', 'inverter_energy_loss', 'curtailment_energy_loss', 
+                                                  'tracker_malfunction_energy_loss', 'other_energy_loss']
+                energy_loss_bar_cols_for_plot = [col for col in energy_loss_bar_cols_for_plot if col in daily_losses_data.columns]
+            except Exception as e:
+                st.warning(f"Could not load pre-generated daily summary for bar chart: {e}. Calculating on the fly.")
+                energy_loss_cols_plot_raw_fallback = ['cloud_energy_loss', 'shading_energy_loss', 'temperature_energy_loss', 
+                                         'soiling_energy_loss', 'inverter_energy_loss', 'curtailment_energy_loss', 
+                                         'tracker_malfunction_energy_loss', 'other_energy_loss']
+                daily_losses_data = df_filtered[energy_loss_cols_plot_raw_fallback].resample('D').sum().fillna(0)
+                energy_loss_bar_cols_for_plot = energy_loss_cols_plot_raw_fallback
+        else:
+            energy_loss_cols_plot_raw_fallback = ['cloud_energy_loss', 'shading_energy_loss', 'temperature_energy_loss', 
+                                         'soiling_energy_loss', 'inverter_energy_loss', 'curtailment_energy_loss', 
+                                         'tracker_malfunction_energy_loss', 'other_energy_loss']
+            daily_losses_data = df_filtered[energy_loss_cols_plot_raw_fallback].resample('D').sum().fillna(0) 
+            energy_loss_bar_cols_for_plot = energy_loss_cols_plot_raw_fallback
+        
+        # Sort for bar chart as well, for consistency
+        energy_loss_bar_cols_sorted = sorted(energy_loss_bar_cols_for_plot, key=lambda x: daily_losses_data[x].sum())
+
         fig_daily_losses = go.Figure()
-        for col in energy_loss_cols_plot:
+        for col in energy_loss_bar_cols_sorted: 
+            # Adjust display name for bar chart
+            if ' Mwh' in col:
+                 display_name_bar = col.replace(" Mwh", "").replace(" Loss", " Loss").title()
+            else:
+                 display_name_bar = col.replace("_energy_loss", " Loss").replace("_", " ").title()
+
             fig_daily_losses.add_trace(go.Bar(
                 x=daily_losses_data.index,
                 y=daily_losses_data[col],
-                name=col.replace("_energy_loss", "").replace("_", " ").title()
+                name=display_name_bar
             ))
         
         fig_daily_losses.update_layout(
@@ -290,7 +433,13 @@ def create_streamlit_dashboard():
             title='Daily Total Losses by Category',
             xaxis_title='Date',
             yaxis_title='Energy Loss (MWh)',
-            hovermode="x unified"
+            hovermode="x unified",
+            xaxis=dict(
+                dtick="M1", # Monthly ticks for daily bar chart
+                tickformat="%b %Y", 
+                tickangle=0,
+                type='date'
+            )
         )
         st.plotly_chart(fig_daily_losses, use_container_width=True)
 
@@ -316,7 +465,7 @@ def create_streamlit_dashboard():
                 
                 fig_inv = px.line(inv_power_data.dropna(), title="Inverter Power Output Over Time")
                 fig_inv.update_yaxes(title_text="Power (MW)")
-                fig_inv.update_xaxes(title_text="Date")
+                fig_inv.update_xaxes(title_text="Date", type='date', dtick="M1", tickformat="%b %Y", tickangle=0) # Add x-axis formatting
                 st.plotly_chart(fig_inv, use_container_width=True)
             else:
                 st.info("Inverter power data not available for detailed comparison.")
@@ -352,7 +501,7 @@ def create_streamlit_dashboard():
                     df_filtered.dropna(subset=['avg_module_temp', 'performance_ratio']),
                     x='avg_module_temp',
                     y='performance_ratio',
-                    color='TemperatureEffect', # Color by temperature effect flag
+                    color='TemperatureEffect', # Color by cloud cover flag
                     title="Module Temperature vs Performance Ratio",
                     labels={'avg_module_temp': 'Module Temperature (°C)', 'performance_ratio': 'Performance Ratio'}
                 )
@@ -392,6 +541,7 @@ def create_streamlit_dashboard():
                 markers=True
             )
             fig_hourly_pr.update_yaxes(range=[0, 1.0]) # PR is typically between 0 and 1
+            fig_hourly_pr.update_xaxes(title_text="Hour of Day", dtick=1) # Ensure hourly ticks
             st.plotly_chart(fig_hourly_pr, use_container_width=True)
         else:
             st.info("Performance ratio data not sufficient for hourly trend analysis.")
